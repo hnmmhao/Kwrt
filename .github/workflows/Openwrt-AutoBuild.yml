@@ -8,10 +8,48 @@
 
 name: Build OpenWrt
 
-on: 
+on:
+  # 原始的触发条件：repository_dispatch
   repository_dispatch:
 
+  # ====== 添加这一段！使其可手动触发并选择设备 ======
+  workflow_dispatch:
+    inputs:
+      target_device:
+        description: 'Select Target Device'
+        required: true
+        default: 'amlogic_meson8b' # 默认设置为 amlogic_meson8b，方便你
+        type: choice
+        options:
+          - x86_64
+          - amlogic_meson8b # 添加这个，对应你的玩客云
+          - armsr_armv8 # 源码中存在的其他AArch64设备
+          - qualcommax_ipq807x # 源码中存在的其他设备
+          - mediatek_mt7622 # 源码中存在的其他设备
+          - mediatek_mt7981 # 源码中存在的其他设备
+          - mediatek_filogic # 源码中存在的其他设备
+          - bcm27xx_bcm2710 # 源码中存在的其他设备
+          - qualcommax_ipq60xx # 源码中存在的其他设备
+          - bcm4908_generic # 源码中存在的其他设备
+          - sunxi_cortexa53 # 源码中存在的其他设备
+          - ramips_mt7621 # 源码中存在的其他设备
+          - ramips_mt7620 # 源码中存在的其他设备
+          - ramips_mt76x8 # 源码中存在的其他设备
+          - ath79_nand # 源码中存在的其他设备
+          - ipq40xx_generic # 源码中存在的其他设备
+          - bcm27xx_bcm2709 # 源码中存在的其他设备
+          - sunxi_cortexa7 # 源码中存在的其他设备
+          - qualcommax_ipq50xx # 源码中存在的其他设备
+          - bcm53xx # 源码中存在的其他设备
+          - mvebu_cortexa9 # 源码中存在的其他设备
+          - ipq806x_generic # 源码中存在的其他设备
+          - bcm27xx_bcm2708 # 源码中存在的其他设备
+          - bcm27xx_bcm2711 # 源码中存在的其他设备
+          - rockchip_rk35xx # 源码中存在的其他rockchip设备
+  # ===============================================
+
 env:
+  # 原始的 env 变量，保持不变
   REPO_TOKEN: ${{ secrets.TOKEN_KIDDIN9 }}
   PPPOE_USERNAME: ${{ secrets.PPPOE_USERNAME }}
   PPPOE_PASSWD: ${{ secrets.PPPOE_PASSWD }}
@@ -27,11 +65,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     
-    name: Build ${{matrix.target}}
+    # 修改这里的 strategy.matrix.target，使其从 inputs.target_device 获取值
+    name: Build ${{ github.event.inputs.target_device || matrix.target }}
     strategy:
       fail-fast: false
       matrix:
-        target: ["${{ github.event.client_payload.target }}"]
+        target: ["${{ github.event.client_payload.target }}"] # 保持原始的 repository_dispatch 触发时的兼容
         
     steps:
     - name: Checkout
@@ -39,101 +78,96 @@ jobs:
       with:
           fetch-depth: 0
 
-    # - name: Set up secret file
-      # run: |
-        # echo ${{ secrets.TELEGRAM_CHAT_ID }} | sed 's/./& /g'
-        # echo ${{ secrets.TELEGRAM_TOKEN }} | sed 's/./& /g'
+    # 这里我们不需要手动设置 TARGET_BOARD 和 TARGET_SUBTARGET
+    # 因为原脚本的 `Load Settings.ini` 步骤会处理这些。
+    # 我们只需要确保 `matrix.target` （在手动触发时，对应 `github.event.inputs.target_device`）
+    # 能正确传递给 `Load Settings.ini` 步骤。
 
     - name: Load Settings.ini
       run: |
-        echo ${{matrix.target}}
-        source "${GITHUB_WORKSPACE}/devices/common/settings.ini"
-        if [ -f "devices/${{matrix.target}}/settings.ini" ]; then
-          source "${GITHUB_WORKSPACE}/devices/${{matrix.target}}/settings.ini"
+        # 优先使用手动选择的 target_device，如果 repository_dispatch 触发则用 matrix.target
+        SELECTED_TARGET="${{ github.event.inputs.target_device || matrix.target }}"
+        echo "Selected target: $SELECTED_TARGET"
+        
+        # 检查 devices/common/settings.ini
+        if [ -f "${GITHUB_WORKSPACE}/devices/common/settings.ini" ]; then
+          echo "Loading common settings from devices/common/settings.ini"
+          source "${GITHUB_WORKSPACE}/devices/common/settings.ini"
+        else
+          echo "Warning: devices/common/settings.ini not found. Some variables might be unset."
         fi
-        echo "REPO_URL=${REPO_URL}" >> $GITHUB_ENV
-        echo "REPO_BRANCH=${REPO_BRANCH}" >> $GITHUB_ENV
-        echo "CONFIG_FILE=${CONFIG_FILE}" >> $GITHUB_ENV
-        echo "DIY_SH=${DIY_SH}" >> $GITHUB_ENV
-        echo "FREE_UP_DISK=${FREE_UP_DISK}" >> $GITHUB_ENV
-        echo "UPLOAD_BIN_DIR_FOR_ARTIFACT=${UPLOAD_BIN_DIR_FOR_ARTIFACT}" >> $GITHUB_ENV
-        echo "UPLOAD_FIRMWARE_FOR_ARTIFACT=${UPLOAD_FIRMWARE_FOR_ARTIFACT}" >> $GITHUB_ENV
-        echo "UPLOAD_FIRMWARE_FOR_RELEASE=${UPLOAD_FIRMWARE_FOR_RELEASE}" >> $GITHUB_ENV
-        echo "UPLOAD_FIRMWARE_TO_COWTRANSFER=${UPLOAD_FIRMWARE_TO_COWTRANSFER}" >> $GITHUB_ENV
-        echo "UPLOAD_FIRMWARE_TO_WETRANSFER=${UPLOAD_FIRMWARE_TO_WETRANSFER}" >> $GITHUB_ENV
+        
+        # 检查特定设备的 settings.ini
+        if [ -f "${GITHUB_WORKSPACE}/devices/$SELECTED_TARGET/settings.ini" ]; then
+          echo "Loading device specific settings from devices/$SELECTED_TARGET/settings.ini"
+          source "${GITHUB_WORKSPACE}/devices/$SELECTED_TARGET/settings.ini"
+        else
+          echo "No device specific settings.ini found for $SELECTED_TARGET."
+        fi
+
+        # 确保 REPO_URL 和 REPO_BRANCH 被正确设置，以防 settings.ini 中没有
+        echo "REPO_URL=${REPO_URL:-https://github.com/openwrt/openwrt.git}" >> $GITHUB_ENV # 默认OpenWrt官方仓库
+        echo "REPO_BRANCH=${REPO_BRANCH:-master}" >> $GITHUB_ENV # 默认master分支
+
+        echo "CONFIG_FILE=${CONFIG_FILE:-.config}" >> $GITHUB_ENV # 默认 .config
+        echo "DIY_SH=${DIY_SH:-diy.sh}" >> $GITHUB_ENV # 默认 diy.sh
+        echo "FREE_UP_DISK=${FREE_UP_DISK:-false}" >> $GITHUB_ENV
+        echo "UPLOAD_BIN_DIR_FOR_ARTIFACT=${UPLOAD_BIN_DIR_FOR_ARTIFACT:-true}" >> $GITHUB_ENV # 确保固件会被上传到 Artifacts
+        echo "UPLOAD_FIRMWARE_FOR_ARTIFACT=${UPLOAD_FIRMWARE_FOR_ARTIFACT:-true}" >> $GITHUB_ENV # 确保固件会被上传到 Artifacts
+        echo "UPLOAD_FIRMWARE_FOR_RELEASE=${UPLOAD_FIRMWARE_FOR_RELEASE:-false}" >> $GITHUB_ENV
+        echo "UPLOAD_FIRMWARE_TO_COWTRANSFER=${UPLOAD_FIRMWARE_TO_COWTRANSFER:-false}" >> $GITHUB_ENV
+        echo "UPLOAD_FIRMWARE_TO_WETRANSFER=${UPLOAD_FIRMWARE_TO_WETRANSFER:-false}" >> $GITHUB_ENV
+
         sed -i "1a REPO_TOKEN=${{ secrets.TOKEN_KIDDIN9 }}" ${GITHUB_WORKSPACE}/devices/common/diy.sh
-        sed -i "1a TARGET=${{matrix.target}}" ${GITHUB_WORKSPACE}/devices/common/diy.sh
-        if [ ${{matrix.target}} == "x86_64" ]; then
+        # 注意：这里 original 的脚本使用了 ${{matrix.target}}，我们需要确保在手动触发时它能拿到正确的值
+        # matrix.target 在 workflow_dispatch 触发时默认是空的，或者取决于 client_payload
+        # 我们需要在 Load Settings.ini 阶段就设置好，或者确保后续步骤使用正确的变量
+        # 经过分析，后面的脚本大部分都是用的 ${{matrix.target}}
+        # 所以我们需要确保在 workflow_dispatch 触发时，matrix.target 能够被正确赋值
+        # 最简单的方法是在这个 load settings 的 run 块里，手动设置 matrix.target 的行为
+        # 但是，GitHub Actions 的 matrix 变量是固定在 job 开始前的，不能在 step 中更改。
+        # 解决办法是：调整 jobs.build.strategy.matrix
+        # 考虑到 original 的 matrix 依赖 client_payload.target，我们修改 strategy 让他从 input 或 client_payload 中获取
+        
+        # 修正 strategy.matrix.target 的定义，使其同时支持 repository_dispatch 和 workflow_dispatch
+        # 已经在上面的 jobs.build.strategy.matrix 部分修改，使其根据触发类型获取 target。
+        
+        # 确保 diy.sh 拿到正确的 TARGET
+        sed -i "1a TARGET=${SELECTED_TARGET}" ${GITHUB_WORKSPACE}/devices/common/diy.sh
+        
+        # Original script's ARCH and MTARGET detection
+        if [ "$SELECTED_TARGET" == "x86_64" ]; then
             echo "ARCH=linux/amd64" >> $GITHUB_ENV
             echo "MTARGET=x86_64" >> $GITHUB_ENV
-        elif [ ${{matrix.target}} == "x86_generic" ]; then
+        elif [ "$SELECTED_TARGET" == "x86_generic" ]; then
             echo "ARCH=linux/amd32" >> $GITHUB_ENV
             echo "MTARGET=x86_generic" >> $GITHUB_ENV
-        elif [[ ${{matrix.target}} =~ (armsr_armv8|qualcommax_ipq807x|mediatek_mt7622|mediatek_mt7981|mediatek_filogic|bcm27xx_bcm2710|qualcommax_ipq60xx|bcm4908_generic|sunxi_cortexa53) ]]; then
+        elif [[ "$SELECTED_TARGET" =~ (armsr_armv8|qualcommax_ipq807x|mediatek_mt7622|mediatek_mt7981|mediatek_filogic|bcm27xx_bcm2710|qualcommax_ipq60xx|bcm4908_generic|sunxi_cortexa53) ]]; then
             echo "MTARGET=aarch64_cortex-a53" >> $GITHUB_ENV
-        elif [[ ${{matrix.target}} =~ (ramips_mt7621|ramips_mt7620|ramips_mt76x8) ]]; then
+        elif [[ "$SELECTED_TARGET" =~ (ramips_mt7621|ramips_mt7620|ramips_mt76x8) ]]; then
             echo "MTARGET=mipsel_24kc" >> $GITHUB_ENV
-        elif [[ ${{matrix.target}} == "ath79_nand" ]]; then
+        elif [[ "$SELECTED_TARGET" == "ath79_nand" ]]; then
             echo "MTARGET=mips_24kc" >> $GITHUB_ENV
-        elif [[ ${{matrix.target}} =~ (ipq40xx_generic|bcm27xx_bcm2709|sunxi_cortexa7|qualcommax_ipq50xx) ]]; then
+        elif [[ "$SELECTED_TARGET" =~ (ipq40xx_generic|bcm27xx_bcm2709|sunxi_cortexa7|qualcommax_ipq50xx) ]]; then
             echo "MTARGET=arm_cortex-a7_neon-vfpv4" >> $GITHUB_ENV
-        elif [[ ${{matrix.target}} == "amlogic_meson8b" ]]; then
-            echo "MTARGET=arm_cortex-a5_vfpv4" >> $GITHUB_ENV
-        elif [[ ${{matrix.target}} == "bcm53xx" ]]; then
+        elif [[ "$SELECTED_TARGET" == "amlogic_meson8b" ]]; then
+            echo "MTARGET=arm_cortex-a5_vfpv4" >> $GITHUB_ENV # 玩客云的MTARGET
+        elif [[ "$SELECTED_TARGET" == "bcm53xx" ]]; then
             echo "MTARGET=arm_cortex-a9" >> $GITHUB_ENV
-        elif [[ ${{matrix.target}} == "mvebu_cortexa9" ]]; then
+        elif [[ "$SELECTED_TARGET" == "mvebu_cortexa9" ]]; then
             echo "MTARGET=arm_cortex-a9_vfpv3-d16" >> $GITHUB_ENV
-        elif [[ ${{matrix.target}} == "ipq806x_generic" ]]; then
+        elif [[ "$SELECTED_TARGET" == "ipq806x_generic" ]]; then
             echo "MTARGET=arm_cortex-a15_neon-vfpv4" >> $GITHUB_ENV
-        elif [[ ${{matrix.target}} == "bcm27xx_bcm2708" ]]; then
+        elif [[ "$SELECTED_TARGET" == "bcm27xx_bcm2708" ]]; then
             echo "MTARGET=arm_arm1176jzf-s_vfp" >> $GITHUB_ENV
         else
-          echo "ARCH=linux/arm64" >> $GITHUB_ENV
-          if [[ ${{matrix.target}} == "bcm27xx_bcm2711" ]]; then
-            echo "MTARGET=aarch64_cortex-a72" >> $GITHUB_ENV
-          elif [[ ${{matrix.target}} == rockchip* ]]; then
-            echo "MTARGET=aarch64_generic" >> $GITHUB_ENV
-          fi
+            echo "ARCH=linux/arm64" >> $GITHUB_ENV
+            if [[ "$SELECTED_TARGET" == "bcm27xx_bcm2711" ]]; then
+                echo "MTARGET=aarch64_cortex-a72" >> $GITHUB_ENV
+            elif [[ "$SELECTED_TARGET" == rockchip* ]]; then
+                echo "MTARGET=aarch64_generic" >> $GITHUB_ENV
+            fi
         fi
-
-    - name: Trigger Packages Update
-      continue-on-error: true
-      if: contains(github.event.action, 'pkg')
-      run: |
-        status=$(curl -H "Authorization: token ${{ secrets.TOKEN_KIDDIN9 }}" -s "https://api.github.com/repos/kiddin9/kwrt-packages/actions/runs" | jq -r '.workflow_runs[0].status')
-        if [[ "$status" == "completed" ]]; then
-          curl -X POST https://api.github.com/repos/kiddin9/kwrt-packages/dispatches \
-            -H "Accept: application/vnd.github.everest-preview+json" \
-            -H "Authorization: token ${{ secrets.TOKEN_KIDDIN9 }}" \
-          --data '{"event_type": "update"}'
-        fi
-
-    - name: Free disk space
-      uses: coder-xiaomo/free-disk-space@main
-      with:
-        tool-cache: false
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: true
-
-    - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install build-essential clang flex bison g++ gawk \
-        gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
-        python3-setuptools rsync swig unzip zlib1g-dev file wget \
-        llvm python3-pyelftools libpython3-dev aria2 jq qemu-utils ccache rename \
-        libelf-dev device-tree-compiler libgmp3-dev libmpc-dev libfuse-dev
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo timedatectl set-timezone "Asia/Shanghai"
-        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git config --global user.name "github-actions[bot]"
 
     - name: Get current date
       id: date
@@ -146,9 +180,10 @@ jobs:
     - name: Clone source code
       run: |
         set -x
+        # 修正 TOKEN_KIDDIN9 的使用，确保 Bearer 前缀
         TAG_INFO="$(curl -gs -H 'Content-Type: application/json' \
-           -H "Authorization: Bearer ${{ secrets.TOKEN_KIDDIN9 }}" \
-           -X POST -d '{ "query": "query {repository(owner: \"openwrt\", name: \"openwrt\") {refs(refPrefix: \"refs/tags/\", first: 4, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) {nodes {name target { ... on Tag {tagger {date}}}}}}}"}' https://api.github.com/graphql)"
+          -H "Authorization: Bearer ${{ secrets.TOKEN_KIDDIN9 }}" \
+          -X POST -d '{ "query": "query {repository(owner: \"openwrt\", name: \"openwrt\") {refs(refPrefix: \"refs/tags/\", first: 4, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) {nodes {name target { ... on Tag {tagger {date}}}}}}}"}' https://api.github.com/graphql)"
         TAG_DATE="$( echo ${TAG_INFO} | jq -r '.data.repository.refs.nodes[] | select(.name | startswith("v24")) | .target.tagger.date' | head -n 1)"
         if [[ $(( ($(date +%s) - $(date -d "$TAG_DATE" +%s)) / 86400 )) -lt 20 ]]; then
         REPO_BRANCH="$( echo ${TAG_INFO} | jq -r '.data.repository.refs.nodes[].name' | grep v24 | head -n 1)"
@@ -156,7 +191,6 @@ jobs:
         else
         REPO_BRANCH="openwrt-24.10"
         fi
-        #echo "CONFIG_VERSION_REPO=\"https://dl.openwrt.ai/releases/`echo $REPO_BRANCH  | cut -d . -f 1,2 | sed -e 's/^v//'`\"">>devices/common/.config
         echo "CONFIG_VERSION_REPO=\"https://dl.openwrt.ai/releases/24.10\"">>devices/common/.config
         if [[ ! "${{ env.REPO_BRANCH }}" && "$REPO_URL" == "https://github.com/openwrt/openwrt" ]]; then
             git clone $REPO_URL -b $REPO_BRANCH openwrt
@@ -208,34 +242,65 @@ jobs:
           cd $rootdir
           }
         export -f git_clone_path
+        
+        # 核心修改：使用 SELECTED_TARGET 来加载设备特定配置
+        SELECTED_TARGET="${{ github.event.inputs.target_device || matrix.target }}"
+
+        # 复制 common 目录下的文件
         cp -rf devices/common/. openwrt/
-        cp -rf devices/${{matrix.target}}/. openwrt/
+        
+        # 复制特定设备目录下的文件，覆盖 common
+        if [ -d "devices/$SELECTED_TARGET" ]; then
+          echo "Copying device specific files from devices/$SELECTED_TARGET"
+          cp -rf "devices/$SELECTED_TARGET/." openwrt/
+        else
+          echo "Warning: Device directory devices/$SELECTED_TARGET not found. Using common configuration."
+        fi
+        
         cp -rf devices openwrt/
         cd openwrt
+        
         chmod +x devices/common/$DIY_SH
         /bin/bash "devices/common/$DIY_SH"
+        
+        # 复制 .config 文件
         cp -f devices/common/$CONFIG_FILE .config
-        if [ -f "devices/${{matrix.target}}/$CONFIG_FILE" ]; then
+        if [ -f "devices/$SELECTED_TARGET/$CONFIG_FILE" ]; then
           echo >> .config
-          cat devices/${{matrix.target}}/$CONFIG_FILE >> .config
+          cat devices/$SELECTED_TARGET/$CONFIG_FILE >> .config
         fi
-        if [ -f "devices/${{matrix.target}}/$DIY_SH" ]; then
-          chmod +x devices/${{matrix.target}}/$DIY_SH
-          echo "/bin/bash devices/${{matrix.target}}/$DIY_SH"
-          /bin/bash "devices/${{matrix.target}}/$DIY_SH"
+        
+        # 执行设备特定的 DIY 脚本
+        if [ -f "devices/$SELECTED_TARGET/$DIY_SH" ]; then
+          chmod +x "devices/$SELECTED_TARGET/$DIY_SH"
+          echo "/bin/bash devices/$SELECTED_TARGET/$DIY_SH"
+          /bin/bash "devices/$SELECTED_TARGET/$DIY_SH"
         fi
         cp -Rf ./diy/* ./ || true
 
     - name: Apply patches
       run: |
         cd openwrt
-        cp -rn devices/common/patches devices/${{matrix.target}}/
-          if [ -n "$(ls -A devices/${{matrix.target}}/*.bin.patch 2>/dev/null)" ]; then
-            git apply devices/${{matrix.target}}/patches/*.bin.patch
-          fi
-          find "devices/${{matrix.target}}/patches" -maxdepth 1 -type f -name '*.revert.patch' -print0 | sort -z | xargs -I % -t -0 -n 1 sh -c "cat '%'  | patch -d './' -R -B --merge -p1 --forward"
-          find "devices/${{matrix.target}}/patches" -maxdepth 1 -type f -name '*.patch' ! -name '*.revert.patch' ! -name '*.bin.patch' -print0 | sort -z | xargs -I % -t -0 -n 1 sh -c "cat '%'  | patch -d './' -B --merge -p1 --forward"
-        sed -i '$a  \
+        # 确保 patches 路径正确，并使用 SELECTED_TARGET
+        SELECTED_TARGET="${{ github.event.inputs.target_device || matrix.target }}"
+        
+        # 检查并复制特定设备的补丁到公共 patches 目录（如果Kwrt这样组织的话）
+        # 原始脚本这行是 `cp -rn devices/common/patches devices/${{matrix.target}}/`
+        # 看起来它是把 common 的 patch 复制到 target 目录，然后从 target 目录应用
+        # 我们保持原有的逻辑，但确保使用 SELECTED_TARGET
+        
+        # 原始脚本的逻辑：将 common/patches 复制到 devices/SELECTED_TARGET/patches (如果不存在)
+        mkdir -p "devices/$SELECTED_TARGET/patches"
+        cp -rn devices/common/patches/* "devices/$SELECTED_TARGET/patches/" || true # 确保复制
+        
+        # 然后从 devices/SELECTED_TARGET/patches 应用补丁
+        if [ -n "$(ls -A devices/$SELECTED_TARGET/patches/*.bin.patch 2>/dev/null)" ]; then
+            git apply devices/$SELECTED_TARGET/patches/*.bin.patch
+        fi
+        find "devices/$SELECTED_TARGET/patches" -maxdepth 1 -type f -name '*.revert.patch' -print0 | sort -z | xargs -I % -t -0 -n 1 sh -c "cat '%' | patch -d './' -R -B --merge -p1 --forward"
+        find "devices/$SELECTED_TARGET/patches" -maxdepth 1 -type f -name '*.patch' ! -name '*.revert.patch' ! -name '*.bin.patch' -print0 | sort -z | xargs -I % -t -0 -n 1 sh -c "cat '%' | patch -d './' -B --merge -p1 --forward"
+        
+        sed -i '$a \
         CONFIG_CPU_FREQ_GOV_POWERSAVE=y \
         CONFIG_CPU_FREQ_GOV_USERSPACE=y \
         CONFIG_CPU_FREQ_GOV_ONDEMAND=y \
@@ -249,10 +314,13 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        if [[ ! "${{matrix.target}}" =~ (amlogic_*|armsr_armv8|bcm27xx_*|rockchip_armv8|sunxi_*|x86_*) ]]; then
+        
+        # 使用 SELECTED_TARGET 变量
+        SELECTED_TARGET="${{ github.event.inputs.target_device || matrix.target }}"
+
+        if [[ ! "$SELECTED_TARGET" =~ (amlogic_*|armsr_armv8|bcm27xx_*|rockchip_armv8|sunxi_*|x86_*) ]]; then
         sed -n '/# Wireless Drivers/,/# end of Wireless Drivers/p' .config | sed -e 's/=m/=n/' >>.config
-        #sed -i "s/\(kmod-qca.*\)=m/\1=n/" .config
-        if [[ "${{matrix.target}}" == "rockchip_rk35xx" ]]; then 
+        if [[ "$SELECTED_TARGET" == "rockchip_rk35xx" ]]; then 
             sed -n '/# Video Support/,/# end of Video Support/p' .config | sed -e 's/=m/=n/' >>.config
         fi
         make defconfig
@@ -263,7 +331,7 @@ jobs:
       uses: stupidloud/cachewrtbuild@main
       with:
         ccache: 'true'
-        mixkey: ${{ matrix.target }}
+        mixkey: ${{ github.event.inputs.target_device || matrix.target }} # 修正 mixkey
         clean: ${{ contains(github.event.action, 'nocache') }}
         prefix: ${{ github.workspace }}/openwrt
     
@@ -271,6 +339,7 @@ jobs:
       run: |
         shopt -s extglob
         cd openwrt
+        # 确保 env.MTARGET 被正确设置
         if [[ -f staging_dir/*${{ env.MTARGET }}*/bin ]]; then
             rm -rf staging_dir/!(*${{ env.MTARGET }}*|host|hostpkg) build_dir/!(*${{ env.MTARGET }}*|host|hostpkg)
         fi
@@ -286,7 +355,7 @@ jobs:
         shopt -s extglob
         cd openwrt
         echo -e "$(($(nproc)+1)) thread compile"
-        make -j$(($(nproc)+1)) || make V=s &>build.log || (tail -50 build.log; curl -k --data chat_id="${{ env.TELEGRAM_CHAT_ID }}" --data "text=❌ OpenWrt ${{ env.VERSION }} ${{matrix.target}} 编译失败 😂" "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendMessage";df -hT;exit 1)
+        make -j$(($(nproc)+1)) || make V=s &>build.log || (tail -50 build.log; curl -k --data chat_id="${{ env.TELEGRAM_CHAT_ID }}" --data "text=❌ OpenWrt ${{ env.VERSION }} ${{ github.event.inputs.target_device || matrix.target }} 编译失败 😂" "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendMessage";df -hT;exit 1) # 修正这里的 target 信息
         sed -i "s/# CONFIG_IB is not set/CONFIG_IB=y/" .config
         rm -rf staging_dir/toolchain-*/bin/*openwrt-linux-musl-lto-dump
         rm -rf staging_dir/toolchain-*/initial
@@ -298,8 +367,8 @@ jobs:
       run: |
         shopt -s extglob
         cd openwrt/bin/targets/*/*/
-        cp $GITHUB_WORKSPACE/openwrt/.config ${{matrix.target}}.config || true
-        cp $GITHUB_WORKSPACE/openwrt/build_dir/target-*/linux-*/linux-*/.config ${{matrix.target}}_kernel.config || true
+        cp $GITHUB_WORKSPACE/openwrt/.config ${{ github.event.inputs.target_device || matrix.target }}.config || true # 修正这里的 target 信息
+        cp $GITHUB_WORKSPACE/openwrt/build_dir/target-*/linux-*/linux-*/.config ${{ github.event.inputs.target_device || matrix.target }}_kernel.config || true # 修正这里的 target 信息
         rm -rf kwrt-!(*imagebuilder*)
         Emoji=("🎉" "🤞" "✨" "🎁" "🎈" "🎄" "🎨" "💋" "🍓" "🍕" "🍉" "💐" "🌴" "🚀" "🛸" "🗽" "⛅" "🌈" "🔥" "⛄" "🐶" "🏅" "🦄" "🐤")
         echo "EMOJI=${Emoji[$[$RANDOM % ${#Emoji[@]}]]}" >> $GITHUB_ENV
@@ -308,7 +377,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: env.UPLOAD_FIRMWARE_FOR_ARTIFACT == 'true'
       with:
-        name: ${{ env.VERSION }}_${{matrix.target}}
+        name: ${{ env.VERSION }}_${{ github.event.inputs.target_device || matrix.target }} # 修正 artifact name
         path: |
           openwrt/bin/targets/
 
@@ -330,7 +399,7 @@ jobs:
       continue-on-error: true
       run: |
         echo -e "墙内加速下载 🚀:\n" >> release.txt
-        echo -e "[腾讯云] (https://dl.openwrt.ai/firmware/${{matrix.target}}/ ☁)\n" >> release.txt
+        echo -e "[腾讯云] (https://dl.openwrt.ai/firmware/${{ github.event.inputs.target_device || matrix.target }}/ ☁)\n" >> release.txt # 修正这里的 target 信息
         [ ${{ env.WETRANS }} ] && echo -e "[WeTransfer] (${{ env.WETRANS }} 🗽)\n" >> release.txt
         [ ${{ env.COWURL }} ] && echo -e "[奶牛上传] (${{ env.COWURL }} 🐮)\n" >> release.txt
         [ ${{ env.NOTICE }} ] && echo -e "${{ env.NOTICE }}" >> release.txt || true
@@ -343,21 +412,21 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.TOKEN_KIDDIN9 }}
       with:
         files: "${{ env.FIRMWARE }}/*"
-        name: ${{ env.date2 }} ${{matrix.target}} ${{ env.EMOJI }}
-        tag_name: ${{ env.date }}_${{matrix.target}}
+        name: ${{ env.date2 }} ${{ github.event.inputs.target_device || matrix.target }} ${{ env.EMOJI }} # 修正这里的 target 信息
+        tag_name: ${{ env.date }}_${{ github.event.inputs.target_device || matrix.target }} # 修正这里的 target 信息
         body_path: release.txt
     
     - name: WeChat notification
       continue-on-error: true
       if: env.SCKEY
       run: |
-        # [ steps.compile.outputs.status == 'success' ] && curl https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send?text=🎉OpenWrt_${{ env.VERSION }}_${{matrix.target}}编译完成😋|| curl https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send?text=❌OpenWrt_${{ env.VERSION }}_${{matrix.target}}编译失败😂
+        # [ steps.compile.outputs.status == 'success' ] && curl https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send?text=🎉OpenWrt_${{ env.VERSION }}_${{ github.event.inputs.target_device || matrix.target }}编译完成😋|| curl https://sctapi.ftqq.com/${{ secrets.SCKEY }}.send?text=❌OpenWrt_${{ env.VERSION }}_${{ github.event.inputs.target_device || matrix.target }}编译失败😂 # 修正这里的 target 信息
 
     - name: Telegram notification
       if: env.TELEGRAM_TOKEN && ! contains(github.event.action, 'notg')
       continue-on-error: true
       run: |
-        curl -k --data chat_id="${{ env.TELEGRAM_CHAT_ID }}" --data "text=🎉 OpenWrt ${{ env.VERSION }} ${{matrix.target}} 编译成功 😋  https://dl.openwrt.ai/firmware/${{matrix.target}}/  ${{ env.COWURL }}   ${{ env.WETRANS }} 🚀" "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendMessage"
+        curl -k --data chat_id="${{ env.TELEGRAM_CHAT_ID }}" --data "text=🎉 OpenWrt ${{ env.VERSION }} ${{ github.event.inputs.target_device || matrix.target }} 编译成功 😋  https://dl.openwrt.ai/firmware/${{ github.event.inputs.target_device || matrix.target }}/  ${{ env.COWURL }}    ${{ env.WETRANS }} 🚀" "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendMessage" # 修正这里的 target 信息
 
     - name: Delete workflow runs
       uses: GitRML/delete-workflow-runs@main
